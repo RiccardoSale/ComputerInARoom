@@ -1,2 +1,0 @@
-# ComputerInARoom
-ESA challenge
