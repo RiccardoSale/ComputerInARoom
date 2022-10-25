@@ -4,9 +4,24 @@ import cv2
 import sys
 import numpy as np
 from datetime import datetime
+import matplotlib.pyplot as plt
 import json
 import requests
+import glob, os
 console = True
+
+def color(x, y):
+    if x - 300 < 0:
+        coordx = 10800 - x
+    else:
+        coordx = x - 300
+    if y - 300 < 0:
+        coordy = 21600 - y
+    else:
+        coordy = y - 300
+    for i in range(600):
+        for j in range(600):
+            matrix[(coordx + i) % 10800][(coordy + j) % 21600] += 100
 while console:
     var = input("Please enter the command: ")
     print("You entered: " + var)
@@ -27,11 +42,19 @@ while console:
                                       "reset": int(reset)})
         print(response.json())
     if var == "send":
-        input("Please enter name of the image to send")
+        name = input("Please enter name of the image to send")
+        img = cv2.imread('prova.png')
+        _, im_arr = cv2.imencode('.png', img)  # im_arr: image in Numpy one-dim array format.
+        im_bytes = im_arr.tobytes()
+        im_b64 = base64.b64encode(im_bytes)
+
         #we need to find the last event_number we have completed with that photo
         #event_number =
         #we also need the image in cv2 base64 encoding
-        #request.put( url_console_command + "send" , json={“event_number” : int(event_number), “picture”: base64}
+        #request.put( url_console_command + "send" , json={“event_number” : int(event_number), “picture”: im_b64}
+        
+        
+        
     if var  == "reset":
         response = requests.put(url_Melvin_command + "reset")
         print("Reset sent!")
@@ -46,7 +69,32 @@ while console:
             print("Response received:")
             print(response)
             data = json.loads(response)
+    if var == 'obj':
+        print("waiting for vpn")
+        response = requests.get(url_Melvin_command + "objectives").content
+        data = json.loads(response)
+        data = data['objectives']
+        lines = []
+        for x in data:
+            lines.append(x)
+        lines.sort(key= lambda k: k['start'], reverse= False)
+        now = datetime.now()
+
+        active = []  #futuro array per obbiettivi multipli e far conti distanze
+        for x in lines:#filtriamo obbiettivi e prendiamo solo quelli attivi e che non abbiamo completato
+            if not x['done']:
+                s = x['start']
+                e = x['end']
+                s = s.split('+')[0]
+                s = datetime.strptime(s, '%Y-%m-%dT%H:%M:%S')
+                e = e.split('+')[0]
+                e = datetime.strptime(e, '%Y-%m-%dT%H:%M:%S')
+                if s <= now <= e:
+                    active.append(x)
+        
+        
     if var == "observation":
+        print("waiting for vpn")
         response = requests.get(url_Melvin_command + "observation").content
         now = datetime.now()
         current_time = now.strftime("%H:%M:%S")
@@ -54,7 +102,8 @@ while console:
         print("Response received:")
         print(response)
         data = json.loads(response)
-    if var == "switch_tocharge":
+    if var == "switchtocharge":
+        print("waiting for vpn")
         response = requests.get(url_Melvin_command + "observation").content
         data = json.loads(response)
         vel_x = data['telemetry']['vx']
@@ -65,7 +114,21 @@ while console:
                            "camera_angle": camera_angle,
                            "vel_x": vel_x, "vel_y": vel_y})
         print("Switch to charge done")
-    if var == "change_vel":
+    if var == "switchtoactive":
+        print("waiting for vpn")
+        response = requests.get(url_Melvin_command + "observation").content
+        data = json.loads(response)
+        vel_x = data['telemetry']['vx']
+        vel_y = data['telemetry']['vy']
+        camera_angle = data['telemetry']['angle']
+        requests.put(url_Melvin_command + "control",
+                     json={"state": 'active',
+                           "camera_angle": camera_angle,
+                           "vel_x": vel_x, "vel_y": vel_y})
+        print("Switch to active done")
+
+    if var == "changevel":
+        print("waiting for vpn")
         response = requests.get(url_Melvin_command + "observation").content
         vel_x = input("Please enter vel_x")
         vel_y = input("Please enter vel_y")
@@ -78,7 +141,7 @@ while console:
                            "vel_x": vel_x, "vel_y": vel_y})
         print("Switch vel done")
 
-    if var == "switch_camera_angle":
+    if var == "switchcamera_angle":
         response = requests.get(url_Melvin_command + "observation").content
         data = json.loads(response)
         camera_angle = input("Please enter camera angle")
@@ -97,6 +160,51 @@ while console:
         img_np = np.frombuffer(img_png, dtype=np.uint8)
         img_cv = cv2.imdecode(img_np, flags=cv2.IMREAD_COLOR)
         cv2.imwrite(str(sys.argv[2] + ".png"), img_cv)
+    
+    if var == "plot":
+        print("Start plotting")
+        np.set_printoptions(edgeitems=1000, linewidth=100000, formatter=dict(float=lambda x: "%.5g" % x))
+        matrix = np.zeros((10800, 21600))
+        directory = os.getcwd()
+        os.chdir(directory)
+        csv = open('coords.csv','w+')
+
+        for f in glob.glob("*.png"):
+            if 'matrix' not in f:
+                f = f[6:]
+                f = f.replace('.png','')
+                x,y = f.split('|')   
+                csv.write(x+','+y+'\n')
+
+        csv.close()
+        f = open('coords.csv')
+        lines = f.readlines()
+        for line in lines:
+            coords = line.split(',')
+            color(int(coords[0]), int(coords[1]))
+        
+        f.close()
+        plt.imshow(matrix, cmap='gist_stern')
+        plt.colorbar()
+        plt.gca().set_aspect('auto')
+        plt.savefig('matrix', dpi=600)
+
+    if var == "stiching":
+        print('Start stiching')
+        out = np.zeros((21600,43200,3), np.uint8)
+        path = os.getcwd()
+        path += '/'
+        mylist = os.listdir(path)
+        for fname in mylist:
+            if 'NARROW' in fname:
+                step = fname.split('.')[0]
+                step = step.split('NARROW')[1]
+                coords = step.split('|')
+                tmp = cv2.imread(path + fname)
+                y,x= int(coords[1])+5400, int(coords[0])+10800
+                out[y: y + 600, x: x + 600 ] = tmp
+        cv2.imwrite('map.png',out[5000 : 5000 + 12000, 10000 : 10000 + 24000])
+        
     if var == "exit":
         print("Console will be terminated")
         console = False
