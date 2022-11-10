@@ -1,23 +1,23 @@
 import json
+import time
+
 import requests
 import melvin
 import movement
 import utility
 import init
 
-
-def photo(n_foto, id):  # tipo di lente
+def photo(n_foto, id):
     print("INIT: ",init.taken)
     init.taken += 1
     if n_foto >= init.taken:
-        response_img = requests.get(init.url + "image").content
-        print("SCATTO")
         response = requests.get(init.url + "objectives").content
         data = json.loads(response)
         data = data['objectives']
+        response_img = requests.get(init.url + "image").content
         utility.take_photo(response_img, str(id)+'-'+str(init.taken))
         for obj in data:
-            if obj['id'] == str(id) and obj['done'] is True: # OBBIETTIVO COMPLETATO LANCIO RESET PER VEDERE SE CE NE SONO ALTRI NEL THE TOUR ATTUALE
+            if obj['id'] == str(id) and obj['done'] is True:
                 init.sched.remove_job('photo')
                 init.taken = 0
                 init.active_objectives.pop(0)
@@ -29,9 +29,27 @@ def photo(n_foto, id):  # tipo di lente
         melvin.reset()
     return
 
+def photographer(lens, id):
+    lenses = {'narrow': 51, 'normal': 68, 'wide': 85}  # 85% della size delle lenti
+    response =requests.put(init.url + "control",
+                 json={"state": 'active', "camera_angle": lens, "vel_x": 10, "vel_y": 0})  # SETTIAMO LA LENTE
+    init.sched.remove_job('p')
+    print(response)
+    init.time.sleep(2)
+    response_img = requests.get(init.url + "image").content
+    print(response_img)
+    utility.take_photo(response_img, "first")
+
+    if init.t_photo % lenses[lens] == 0:
+        n_foto = int(init.t_photo / lenses[lens])
+    else:
+        n_foto = int(init.t_photo // lenses[lens]) + 1
+    print('n_photo',n_foto)
+    init.sched.add_job(lambda: photo(n_foto - 1, id), 'interval', seconds=lenses[lens], id='photo', max_instances=10)
+    return
+
 
 def photo_row(n_foto, idx_row, max_row):
-    print("ENTRATO")
     init.taken += 1
     if n_foto >= init.taken:
         print("SCATTO ROW")
@@ -43,30 +61,26 @@ def photo_row(n_foto, idx_row, max_row):
         if idx_row == max_row:
             init.active_objectives.pop(0)
             melvin.reset()
-            # reset si occupa quindi di lanciare gli altri obbiettivi se ce ne sono ancora per quanto riguarda gli obbiettivi multipli
     return
 
 
 def start_photo_row(n_foto, idx_row, interval, max_row):
-    # FACCIAMO PRIMA FOTO ( PER NON ASPETTARE INTERVALLO JOB)
     init.sched.remove_job('start_photo_row' + str(idx_row))
     response_img = requests.get(init.url + "image").content
     utility.take_photo(response_img, 'first', row=idx_row)
     init.sched.add_job(lambda: photo_row(n_foto-1, idx_row, max_row), 'interval', seconds=interval,
                        id='photo_row' + str(idx_row),
-                       max_instances=100)
+                       max_instances=10)
     return
 
 
 def photographer_multiple(lens, n_photo, coordinates):
-    # Scorrere la prima riga
     dic = {'narrow': 55, 'normal': 75, 'wide': 95}
     t_y = {'narrow': 90, 'normal': 110, 'wide': 140}
     init.sched.remove_job('pm')
     requests.put(init.url + "control", json={"state": 'active', "camera_angle": lens, "vel_x": 10, "vel_y": 0})
     tmp_time = 1
     descent_time = t_y[lens]  # calculate y time calculate_y() tempo per scendere in base alla lente usata
-    print("dick", dic[lens] * n_photo)
     for idx in range(1, len(coordinates)):
         init.sched.add_job(lambda: start_photo_row(n_photo, idx, dic[lens], len(coordinates)), 'interval',
                            seconds=tmp_time,
@@ -84,24 +98,6 @@ def photographer_multiple(lens, n_photo, coordinates):
                        max_instances=1)
     return
 
-
-def photographer(lens, id):
-    print('Comincio a fotografare')
-    lenses = {'narrow': 51, 'normal': 68, 'wide': 85}  # 85% della size delle lenti
-    requests.put(init.url + "control",
-                 json={"state": 'active', "camera_angle": lens, "vel_x": 10, "vel_y": 0})  # SETTIAMO LA LENTE
-    init.sched.remove_job('p')
-    if init.t_photo % lenses[lens] == 0:
-        n_foto = int(init.t_photo / lenses[lens])  # numero delle foto
-    else:
-        n_foto = int(init.t_photo // lenses[lens]) + 1
-    print('n_photo',n_foto)
-    print("DENTRO")
-    response_img = requests.get(init.url + "image").content
-    print(response_img)
-    utility.take_photo(response_img,"first")
-    init.sched.add_job(lambda: photo(n_foto - 1, id), 'interval', seconds=lenses[lens], id='photo', max_instances=100)
-    return
 
 
 def area(zone, lens, coverage):
@@ -123,7 +119,6 @@ def area(zone, lens, coverage):
         n_photo = (distance * 2)/lenses[lens]
     else:
         n_photo = ((distance * 2) // lenses[lens]) + 1
-    print("NUMERO: ",n_photo)
     coordinates = []
     if zone['top'] > zone['bottom']:  # Accavvallamento y con bordo
         distance_y = (int((10800 - zone['top'] + zone['bottom']) * coverage) // 2) + 1

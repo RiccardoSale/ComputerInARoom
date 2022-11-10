@@ -7,6 +7,122 @@ TOTAL_X = 21600
 TOTAL_Y = 10800
 
 
+# Given active objectives see if we can reach all of them or remove the unreachable from the path
+def calculator():
+    print("Sono entrato in calculator")
+    response = init.requests.get(init.url + "observation").content
+    data = init.json.loads(response)
+
+    curr_x = int(data['telemetry']['vx'])  # vx attuale
+    curr_y = int(data['telemetry']['vy'])  # vy attuale
+    coord_y = int(data['telemetry']['y'])
+    coord_x = int(data['telemetry']['x'])
+
+    init.active_objectives.sort(
+        key=lambda k: dist(curr_y, k['zone']['top'], TOTAL_Y) + dist(curr_x, k['zone']['left'], TOTAL_X), reverse=False)
+    vel_arr = [[] for _ in range(len(init.active_objectives))]
+    t_route = 0
+    count = 0
+    limit = float('+inf')
+    data_first = None
+    tp_first = 's'
+    pos_min = float('inf')
+
+    while True and count < limit and len(init.active_objectives) != 0:
+        for objective, x in enumerate(init.active_objectives):
+            zone = x['zone']
+            final_x = zone['left']
+            final_y = (zone['top'] + zone['bottom']) // 2
+            x_end_target = zone['right']
+            t_to_target = utility.delta_time(x['end'])
+            t_to_target = int(int(t_to_target.total_seconds()) * 0.9)
+
+            if len(init.active_objectives) == 1 and t_to_target > 5400:
+                print("Esco da calculator perche ho ancora un solo obb da fare e molto tempo a disposizione")
+                return
+
+            lens = x['optic_required'].lower()
+            coverage = int(x['coverage_required']) / 100
+            pixel_photo = ((zone['bottom'] - zone['top']) % 10800) * coverage
+            dic_limit = {'narrow': 550, 'normal': 750, 'wide': 950}
+
+            if pixel_photo > dic_limit[lens]:  # multiple layer photos
+                single_layer = False
+                photo_data = objective_photo.area(zone, lens, coverage)
+
+                if x == init.active_objectives[0]:  # Se siamo al primo
+                    data_first = photo_data
+                    tp_first = 'm'
+
+                expected_t = photo_data[4]
+                t_to_target -= expected_t
+
+            else:
+                single_layer = True
+                dist_ = dist(final_x, x_end_target)
+                init.t_photo = dist_ / 10
+                t_to_target -= init.t_photo
+
+            t_to_target -= t_route
+            '''
+            if t_to_target < 480:  # Evitiamo velocità troppo consumose
+                init.active_objectives.pop(objective)
+                print("sono uscito perche avevo meno di 8 minuti")
+                break
+            '''
+            if count == 0:
+                res = calculate_distance_time_fuel(final_x, final_y, t_to_target, curr_x, curr_y, coord_x, coord_y,
+                                                   True) \
+                    if single_layer is True else calculate_distance_time_fuel(photo_data[0], photo_data[3][0],
+                                                                              t_to_target, curr_x, curr_y, coord_x,
+                                                                              coord_y, True)
+
+                if len(res) == 0:  # skippo tale obbiettivo
+                    print("HO SKIPPATO OBBIETTIVO PERCHE RES E VUOTO")
+                    init.active_objectives.pop(objective)
+                    break
+
+                limit = min(limit, len(res))
+                pos_min = min(pos_min, objective)
+                vel_arr[objective] = res
+
+            if single_layer:
+                t_route += vel_arr[objective][count][0][1] + init.t_photo
+            else:
+                t_route += vel_arr[objective][count][0][1] + expected_t
+
+            coord_x = final_x
+            coord_y = final_y
+
+        if len(init.active_objectives) != 0:
+            init.vel_route = count
+
+            for el in init.data:
+                if el['id'] == init.active_objectives[pos_min]['id']:
+                    print("Ho modificato obbiettivo a done -> true")
+                    el['done'] = True
+
+            if tp_first == 's':
+                print("Ho cominciato a fare un obbiettivo singolo ( POSSO ROUTE)")
+                melvin.go_and_scan(vel_arr[pos_min][count][0], vel_arr[pos_min][count][1],
+                                   init.active_objectives[pos_min]['optic_required'].lower(),
+                                   init.active_objectives[pos_min]['id'])
+            else:
+                print("Ho cominciato a fare un obbiettivo multiplo ( POSSO ROUTE)")
+                melvin.go_and_scan(vel_arr[pos_min][count][0], vel_arr[pos_min][count][1],
+                                   init.active_objectives[pos_min]['optic_required'].lower(),
+                                   init.active_objectives[pos_min]['id'], data_first[3], data_first[2], True)
+
+            return
+
+        else:
+            count += 1
+            t_route = 0
+
+    print("USCITO DA CALCULATOR")
+    return
+
+
 # Distance beetween two coordinates based on module
 def dist(one, two, module=1):
     if module != 1:
@@ -15,16 +131,15 @@ def dist(one, two, module=1):
         return two - one
 
 
+# Calculate min velocity of x given y or viceversa
 def f_min_xy(value):
     if value > 3:
         return 1
     else:
-        if 10 - pow(value, 2) < 0:
-            return 1
-        else:
-            return init.math.trunc(init.math.sqrt(10 - pow(value, 2))) + 1
+        return 1 if 10 - pow(value, 2) < 0 else init.math.trunc(init.math.sqrt(10 - pow(value, 2))) + 1
 
 
+# Remove zero value from the speeds matrix (when is not possible to reach that velocity)
 def filter_matrix(m):
     for i in range(len(m) - 1, 0, -1):
         aux = m[i]
@@ -82,10 +197,10 @@ def generate(tp, max, min, curr, dec, t_to_target, delta, m, negative, multiple=
         if t_tot <= t_to_target:
             if tp == 'x':
                 m.append([cand, t_tot, int(fuel * 100) / 100, t_acc, t_dec, t_cruise])
-                if multiple == False:
+                if multiple is False:
                     return m
             else:
-                if negative == True:
+                if negative:
                     if delta < 0:
                         m.append([cand, t_tot, int(fuel * 100) / 100, t_acc, t_dec, t_cruise])
                     else:
@@ -96,10 +211,10 @@ def generate(tp, max, min, curr, dec, t_to_target, delta, m, negative, multiple=
     return m
 
 
+# Given a location return the possible: velocity,fuel,time  for each valid candidate speed
 def calculate_distance_time_fuel(final_x, final_y, t_to_target, curr_x, curr_y, coord_x, coord_y, multiple=False):
-    dec_y = 0  # vy finale, verosimilmente useremo quasi sempre 0
-    dec_x = 10  # vx finale, non a 0, sfruttiamo movimento lungo paralleli, x sempre attiva
-    # Servono per timing
+    dec_y = 0
+    dec_x = 10
     init.real_vx = curr_x
     init.real_vy = curr_y
 
@@ -117,11 +232,7 @@ def calculate_distance_time_fuel(final_x, final_y, t_to_target, curr_x, curr_y, 
     m_vel_y2 = []
     m_multiple = []
     m_vel_x = generate('x', max_x, min_x, curr_x, dec_x, t_to_target, delta_x, m_vel_x, multiple)
-
-    if coord_y > final_y:
-        negative = True
-    else:
-        negative = False
+    negative = True if coord_y > final_y else False
     m_vel_y = generate('y', max_y, min_y, curr_y, dec_y, t_to_target, delta_y, m_vel_y, negative)
     m_vel_y2 = generate('y', max_y, min_y, curr_y, dec_y, t_to_target, - delta_y, m_vel_y2, negative)
     list_y = m_vel_y + m_vel_y2
@@ -140,121 +251,3 @@ def calculate_distance_time_fuel(final_x, final_y, t_to_target, curr_x, curr_y, 
             break
 
     return [x, y]
-
-
-def calculator():
-    print("Sono entrato in calculator")
-    response = init.requests.get(init.url + "observation").content
-    data = init.json.loads(response)
-    curr_x = int(data['telemetry']['vx'])  # vx attuale
-    curr_y = int(data['telemetry']['vy'])  # vy attuale
-    # salvo y attuale #Nelle iterazioni succ sarà la coordinata del punto appena fatto
-    coord_y = int(data['telemetry']['y'])
-    coord_x = int(data['telemetry']['x'])
-
-    init.active_objectives.sort(key=lambda k: dist(curr_y, k['zone']['top'], TOTAL_Y) + dist(curr_x, k['zone']['left'], TOTAL_X),reverse=False)
-
-    vel_arr = [[] for _ in range(len(init.active_objectives))]
-    t_route = 0
-    count = 0
-    limit = float('+inf')
-    data_first = None
-    tp_first = 's'
-    failed = False
-    pos_min = float('inf')
-    while True and count < limit and len(init.active_objectives) != 0:
-        for objective, x in enumerate(init.active_objectives):
-            print("sto ciclando")
-            zone = x['zone']
-            final_x = zone['left']
-            final_y = (zone['top'] + zone['bottom']) // 2
-            x_end_target = zone['right']
-
-            t_to_target = utility.delta_time(x['end'])
-            t_to_target = int(int(t_to_target.total_seconds()) * 0.9)
-
-            if len(init.active_objectives) == 1 and t_to_target > 5400:
-                print("Esco da calculator perche ho ancora un solo obb da fare e molto tempo a disposizione")
-                return
-
-            lens = x['optic_required'].lower()
-            coverage = int(x['coverage_required']) / 100
-            pixel_photo = ((zone['bottom'] - zone['top']) % 10800) * coverage
-            dic_limit = {'narrow': 550, 'normal': 750, 'wide': 950}
-
-            if pixel_photo > dic_limit[lens]:  # multiple layer photos
-                single_layer = False
-                photo_data = objective_photo.area(zone, lens, coverage)
-                if x == init.active_objectives[0]:  # Se siamo al primo
-                    data_first = photo_data
-                    tp_first = 'm'
-                expected_t = photo_data[4]
-                t_to_target -= expected_t
-            else:
-                single_layer = True
-                dist_ = dist(final_x, x_end_target)
-                init.t_photo = dist_ / 10
-                t_to_target -= init.t_photo
-
-            t_to_target -= t_route  # tolto tempo di viaggio fatto
-            if t_to_target < 480:  # Evitiamo velocità troppo consumose
-                init.active_objectives.pop(objective)
-                print("sono uscito perche avevo meno di 8 minuti")
-                break
-            if count == 0:
-                if single_layer == True:
-                    res = calculate_distance_time_fuel(final_x, final_y, t_to_target, curr_x, curr_y, coord_x, coord_y,True)
-                    print("SINGLE: ",res)
-                else:
-                    res = calculate_distance_time_fuel(photo_data[0], photo_data[3][0], t_to_target, curr_x, curr_y,
-                                                       coord_x, coord_y,
-                                                       True)
-                    print("MULTI: ",res)
-
-                if len(res) == 0:  # skippo tale obbiettivo
-                    print("HO SKIPPATO OBBIETTIVO PERCHE RES E VUOTO")
-                    init.active_objectives.pop(objective)
-                    break
-
-                limit = min(limit, len(res))
-                pos_min = min(pos_min,objective)
-                vel_arr[objective] = res
-
-            if single_layer:
-                # Sommato tempo della x (Tempo reale di arrivo all'obiettivo)
-                t_route += vel_arr[objective][count][0][1] + init.t_photo
-            else:
-                # Sommato tempo della x (Tempo reale di arrivo all'obiettivo)
-                t_route += vel_arr[objective][count][0][
-                               1] + expected_t  # Sommato tempo della x (Tempo reale di arrivo all'obiettivo)
-
-            coord_x = final_x
-            coord_y = final_y
-        if not failed and len(init.active_objectives) != 0:
-            init.vel_route = count
-            if tp_first == 's':
-                for el in init.data:
-                    if el['id'] == init.active_objectives[pos_min]['id']:
-                        print("Ho modificato obbiettivo a done -> true")
-                        el['done'] = True
-                print("Ho cominciato a fare un obbiettivo singolo ( POSSO ROUTE)")
-                melvin.go_and_scan_single(vel_arr[pos_min][count][0], vel_arr[pos_min][count][1],
-                                          init.active_objectives[pos_min]['optic_required'].lower(), init.active_objectives[pos_min]['id'])
-
-            else:
-                for el in init.data:
-                    if el['id'] == init.active_objectives[pos_min]['id']:
-                        print("Ho modificato obbiettivo a done -> true")
-                        el['done'] = True
-                print("Ho cominciato a fare un obbiettivo multiplo ( POSSO ROUTE)")
-                melvin.go_and_scan_multiple(vel_arr[pos_min][count][0], vel_arr[pos_min][count][1], data_first[3],
-                                            init.active_objectives[pos_min]['optic_required'].lower(), data_first[2],
-                                            init.active_objectives[pos_min]['id'])
-
-            return
-        else:
-            failed = False
-            count += 1
-            t_route = 0
-    print("USCITO DA CALCULATOR")
-    return
