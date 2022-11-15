@@ -18,14 +18,14 @@ def photo(n_foto, id):
         utility.take_photo(response_img, str(id) + '-' + str(init.taken))
         for obj in data:
             if obj['id'] == str(id) and obj['done'] is True:
-                if n_foto > 1:
+                if n_foto > 0:
                     stitching.stitch(init.cd)
                 init.sched.remove_job('photo')
                 init.taken = 0
                 init.active_objectives.pop(0)
                 melvin.reset()
     else:
-        if n_foto > 1:
+        if n_foto > 0:
             stitching.stitch(init.cd)
         init.sched.remove_job('photo')
         init.taken = 0
