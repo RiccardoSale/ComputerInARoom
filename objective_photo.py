@@ -1,38 +1,44 @@
 import json
 import time
-
 import requests
 import melvin
 import movement
 import utility
 import init
+import stitching
 
 def photo(n_foto, id):
-    print("INIT: ",init.taken)
+    print("INIT: ", init.taken)
     init.taken += 1
     if n_foto >= init.taken:
         response = requests.get(init.url + "objectives").content
         data = json.loads(response)
         data = data['objectives']
         response_img = requests.get(init.url + "image").content
-        utility.take_photo(response_img, str(id)+'-'+str(init.taken))
+        utility.take_photo(response_img, str(id) + '-' + str(init.taken))
         for obj in data:
             if obj['id'] == str(id) and obj['done'] is True:
+                if n_foto > 1:
+                    stitching.stitch(init.cd)
                 init.sched.remove_job('photo')
                 init.taken = 0
                 init.active_objectives.pop(0)
                 melvin.reset()
     else:
+        if n_foto > 1:
+            stitching.stitch(init.cd)
         init.sched.remove_job('photo')
         init.taken = 0
         init.active_objectives.pop(0)
         melvin.reset()
     return
 
+
 def photographer(lens, id):
     lenses = {'narrow': 51, 'normal': 68, 'wide': 85}  # 85% della size delle lenti
-    response =requests.put(init.url + "control",
-                 json={"state": 'active', "camera_angle": lens, "vel_x": 10, "vel_y": 0})  # SETTIAMO LA LENTE
+    response = requests.put(init.url + "control",
+                            json={"state": 'active', "camera_angle": lens, "vel_x": 10,
+                                  "vel_y": 0})  # SETTIAMO LA LENTE
     init.sched.remove_job('p')
     print(response)
     init.time.sleep(2)
@@ -44,60 +50,91 @@ def photographer(lens, id):
         n_foto = int(init.t_photo / lenses[lens])
     else:
         n_foto = int(init.t_photo // lenses[lens]) + 1
-    print('n_photo',n_foto)
+    print('n_photo', n_foto)
     init.sched.add_job(lambda: photo(n_foto - 1, id), 'interval', seconds=lenses[lens], id='photo', max_instances=10)
     return
 
 
-def photo_row(n_foto, idx_row, max_row):
+def photo_row(n_foto, idx_row, max_row, lens):
+    print("ENTRATO: ", n_foto, idx_row, max_row)
     init.taken += 1
     if n_foto >= init.taken:
         print("SCATTO ROW")
+        requests.put(init.url + "control",
+                     json={"state": 'active', "camera_angle": lens, "vel_x": init.real_vx, "vel_y": init.real_vy})
+        time.sleep(1)
         response_img = requests.get(init.url + "image").content
+        #requests.put(init.url + "control",
+                     #json={"state": 'charge', "camera_angle": lens, "vel_x": init.real_vx, "vel_y": init.real_vy})
+        print("RESPONSE: ", response_img)
         utility.take_photo(response_img, init.taken, row=idx_row)
     else:
-        init.sched.remove_job('photo_row' + str(idx_row))
         init.taken = 0
+        init.sched.remove_job(
+            'photo_row' + str(idx_row))  # TODO potrebbe causare problemi remove troppo vicina a inizio funzione
         if idx_row == max_row:
+            stitching.stitch(init.cd)
             init.active_objectives.pop(0)
             melvin.reset()
     return
 
 
-def start_photo_row(n_foto, idx_row, interval, max_row):
-    init.sched.remove_job('start_photo_row' + str(idx_row))
+def start_photo_row(n_foto, idx_row, interval, max_row, lens):
+    requests.put(init.url + "control",
+                 json={"state": 'active', "camera_angle": lens, "vel_x": init.real_vx, "vel_y": init.real_vy})
+    #init.sched.remove_job('startpr' + str(idx_row))
+    time.sleep(1)
     response_img = requests.get(init.url + "image").content
+    print("INSIDEEEEEEEE: ", n_foto, idx_row, max_row, interval, "SKERE")
     utility.take_photo(response_img, 'first', row=idx_row)
-    init.sched.add_job(lambda: photo_row(n_foto-1, idx_row, max_row), 'interval', seconds=interval,
+    init.sched.add_job(photo_row, args=[n_foto - 1, idx_row, max_row, lens], trigger='interval', seconds=interval,
                        id='photo_row' + str(idx_row),
                        max_instances=10)
     return
 
 
-def photographer_multiple(lens, n_photo, coordinates):
+def photographer_multiple(lens, n_photo, coordinates, wait):
+    time.sleep(wait)
+    response = init.requests.get(init.url + "observation").content
+    data = init.json.loads(response)
+    print("data obs", data)
+
     dic = {'narrow': 55, 'normal': 75, 'wide': 95}
     t_y = {'narrow': 90, 'normal': 110, 'wide': 140}
-    init.sched.remove_job('pm')
-    requests.put(init.url + "control", json={"state": 'active', "camera_angle": lens, "vel_x": 10, "vel_y": 0})
+    requests.put(init.url + "control", json={"state": 'charge', "camera_angle": lens, "vel_x": 10, "vel_y": 0})
     tmp_time = 1
+    count = 1
     descent_time = t_y[lens]  # calculate y time calculate_y() tempo per scendere in base alla lente usata
-    for idx in range(1, len(coordinates)):
-        init.sched.add_job(lambda: start_photo_row(n_photo, idx, dic[lens], len(coordinates)), 'interval',
-                           seconds=tmp_time,
-                           id='start_photo_row' + str(idx),
-                           max_instances=1)
-        init.sched.add_job(lambda: movement.descent(descent_time, idx), 'interval',
-                           seconds=tmp_time + (dic[lens] * (n_photo - 1))+2,
-                           id='descent' + str(idx),
-                           max_instances=1)
-        tmp_time += ((dic[lens] * (n_photo - 1)) + descent_time + 2)
+    print("INFO: ", lens, n_photo, coordinates, len(coordinates), descent_time)
+    while count < len(coordinates):
+        time.sleep(tmp_time)
+        start_photo_row(n_photo, count, dic[lens], len(coordinates), lens)
+        time.sleep((tmp_time + (dic[lens] * (n_photo - 1))))
+        movement.descent(descent_time, count)
+        time.sleep(descent_time)
+        '''
+        print("TEMP_T: ", tmp_time,"lancio  riga numero",count)
+        init.sched.add_job(start_photo_row, args=[n_photo, count, dic[lens], len(coordinates), lens],
+                           trigger='interval', seconds=tmp_time, id='startpr' + str(count), max_instances=1)
 
-    init.sched.add_job(lambda: start_photo_row(n_photo, len(coordinates), dic[lens], len(coordinates)), 'interval',
+        print("IDX: ", str(count), ",", count,"lancio  discesa numero",count)
+        init.sched.add_job(movement.descent, args=[descent_time, count], trigger='interval',
+                           seconds=(tmp_time + (dic[lens] * (n_photo - 1)) + 2), id='descent' + str(count),
+                           max_instances=1)
+        '''
+        count += 1
+        #tmp_time += ((dic[lens] * (n_photo - 1)) + descent_time)
+    #init.sched.print_jobs()
+    time.sleep(descent_time)
+    start_photo_row(n_photo, len(coordinates), dic[lens], len(coordinates), lens)
+    '''
+    init.sched.add_job(start_photo_row, args=[n_photo, len(coordinates), dic[lens], len(coordinates), lens],
+                       trigger='interval',
                        seconds=tmp_time,
-                       id='start_photo_row' + str(len(coordinates)),  # forse cast int
+                       id='startpr' + str(count),  # forse cast int
                        max_instances=1)
+    '''
     return
-
 
 
 def area(zone, lens, coverage):
@@ -116,7 +153,7 @@ def area(zone, lens, coverage):
     new_left = int((center - distance) % 21600)  # Start delle foto
     new_right = int((center + distance) % 21600)
     if (distance * 2) % lenses[lens] == 0:
-        n_photo = (distance * 2)/lenses[lens]
+        n_photo = (distance * 2) / lenses[lens]
     else:
         n_photo = ((distance * 2) // lenses[lens]) + 1
     coordinates = []

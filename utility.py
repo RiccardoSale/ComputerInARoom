@@ -2,14 +2,17 @@ import init
 import movement
 
 
-def create_change_dir(id):
+def create_change_dir(id,response):
     dirname = '/obj/objective_' + str(id)
 
     if not init.os.path.exists(init.cur_dir + dirname):
         init.os.makedirs(init.cur_dir + dirname)
 
+    json = open(init.cur_dir+dirname+'/params.json', 'w+')
+    json.write(init.json.dumps(response))
+    json.close()
     init.cd = init.cur_dir + dirname
-
+    return
 
 def convert_to_datetime(s, e):
     s = s.split('+')[0]
@@ -29,17 +32,17 @@ def cruise_dec(x, y):
         init.sched.add_job(movement.cruise_charge, 'interval', seconds=x[3], id='cruisecharge', max_instances=1)
 
     if y[3] + y[4] != 0:
-        init.sched.add_job(movement.f_dec_y, 'interval', seconds=y[3] + y[5], id='f_dec_y', max_instances=1)
+        init.sched.add_job(movement.f_dec_y, 'interval', seconds=y[3] + y[5], id='decy', max_instances=1)
 
     if x[3] + x[4] != 0:
-        init.sched.add_job(movement.f_dec_x, 'interval', seconds=x[3] + x[5], id='f_dec_x', max_instances=1)
+        init.sched.add_job(movement.f_dec_x, 'interval', seconds=x[3] + x[5], id='decx', max_instances=1)
 
     print(x[3] + x[4])
     if x[3] + x[4] == 0:  # caso y che decelera e x ferma
         print("caso y decelera e ferma")
         init.sched.add_job(movement.charge, 'interval', seconds=y[1], id='charge',
                            max_instances=1)  # todo chiamare start cruise
-
+    return
 
 def delta_time(e):
     e = e.split('+')[0]
@@ -65,7 +68,7 @@ def take_photo(img, type, coordx='', coordy='', row='', map=False):
         init.cv2.imwrite(init.os.path.join(init.cur_dir + '/map',
                                            '|' + str(type) + '|' + str(row) + '|' + str(coordx) + "|" + str(
                                                coordy) + init.image_format), img_cv)
-
+    return
 
 def merge(intervals):
     intervals.sort(key=lambda a: a[0])  # sort for start
@@ -129,7 +132,9 @@ def see_if_takephoto(y_center):
             if tmp == []:
                 return []
             l.append(tmp)
-
+    if len(l) == 0:
+        print("la lista di controllo dell intervallo è vuota")
+        return
     if len(l) == 1:  # ho un unico intervallo posso returnare quello #TODO CONTROLLARE
         return l[0]  # vedere se funzia tramite pop
 
@@ -155,3 +160,26 @@ def see_if_takephoto(y_center):
         new = temp_n
     print("NEW: ", new)
     return new
+
+
+def time_to_closest_y(curr):
+    start = -1
+    for y in range(curr, 10800):
+        if init.y_scan[y] != [[0, 21600]]:
+            start = y
+            break
+    if start == -1:
+        for y in range(0, curr):
+            if init.y_scan[y] != [[0, 21600]]:
+                start = y
+                break
+    print('START: ', start)
+    #da start scendiamo a velocita' (10, 1) fino a center (dista dallo start di 280px, cosi' da avere un overlap di 20px)
+    #poi iniziamo a fotografare da li
+    center = start + 285
+    if curr < center:
+        t = center - curr #tempo per andare da curr a center (start + shift 280px)
+    else:
+        t = (10800 - curr) + center #tempo per arrivare alla fine + tempo per andare a center (start + shift 280px)
+
+    return t

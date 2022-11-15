@@ -19,16 +19,24 @@ def calculator():
     coord_x = int(data['telemetry']['x'])
 
     init.active_objectives.sort(
-        key=lambda k: dist(curr_y, k['zone']['top'], TOTAL_Y) + dist(curr_x, k['zone']['left'], TOTAL_X), reverse=False)
+        key=lambda k: dist(coord_y, k['zone']['top'], TOTAL_Y), reverse=False)
+
     vel_arr = [[] for _ in range(len(init.active_objectives))]
+    init.vel_route = [0] * len(init.active_objectives)
     t_route = 0
     count = 0
-    limit = float('+inf')
+    limit = 20  # float('+inf')
     data_first = None
     tp_first = 's'
-    pos_min = float('inf')
+    breaked = False
+    len_res = 0
+    if dist(coord_y, init.active_objectives[0]['zone']['top']) < 300:
+        melvin.resume_the_tour()
+        return
 
-    while True and count < limit and len(init.active_objectives) != 0:
+    print("INIT: ", init.active_objectives)
+    while True and count <= limit and len(init.active_objectives) != 0:
+        print("COUNT: ", count, "LIMIT: ", limit)
         for objective, x in enumerate(init.active_objectives):
             zone = x['zone']
             final_x = zone['left']
@@ -59,66 +67,72 @@ def calculator():
 
             else:
                 single_layer = True
-                dist_ = dist(final_x, x_end_target)
+                dist_ = dist(final_x, x_end_target, 21600)
                 init.t_photo = dist_ / 10
                 t_to_target -= init.t_photo
 
             t_to_target -= t_route
-            '''
+
             if t_to_target < 480:  # Evitiamo velocità troppo consumose
-                init.active_objectives.pop(objective)
-                print("sono uscito perche avevo meno di 8 minuti")
+                breaked = True
+                print("Riprovo perche avevo troppo poco tempo")
                 break
-            '''
-            if count == 0:
-                res = calculate_distance_time_fuel(final_x, final_y, t_to_target, curr_x, curr_y, coord_x, coord_y,
-                                                   True) \
-                    if single_layer is True else calculate_distance_time_fuel(photo_data[0], photo_data[3][0],
-                                                                              t_to_target, curr_x, curr_y, coord_x,
-                                                                              coord_y, True)
 
-                if len(res) == 0:  # skippo tale obbiettivo
-                    print("HO SKIPPATO OBBIETTIVO PERCHE RES E VUOTO")
-                    init.active_objectives.pop(objective)
-                    break
+            res = calculate_distance_time_fuel(final_x, final_y, t_to_target, curr_x, curr_y, coord_x, coord_y,
+                                               multiple=True) \
+                if single_layer is True else calculate_distance_time_fuel(photo_data[0], photo_data[3][0],
+                                                                          t_to_target, curr_x, curr_y, coord_x,
+                                                                          coord_y, multiple=True)
+            len_res = len(res) - 1
+            if len(res) == 0:  # skippo tale obbiettivo
+                print("RIPROVO VEL + ALTA")
+                breaked = True
+                # init.active_objectives.pop(objective)
+                break
 
-                limit = min(limit, len(res))
-                pos_min = min(pos_min, objective)
-                vel_arr[objective] = res
-
+            vel_arr[objective] = res
+            tmp_count = count
+            if len_res < count:
+                count = len_res
+            init.vel_route[objective] = count
             if single_layer:
                 t_route += vel_arr[objective][count][0][1] + init.t_photo
             else:
                 t_route += vel_arr[objective][count][0][1] + expected_t
-
+            count = tmp_count
             coord_x = final_x
             coord_y = final_y
 
-        if len(init.active_objectives) != 0:
-            init.vel_route = count
-
+        curr_x = int(data['telemetry']['vx'])  # vx attuale
+        curr_y = int(data['telemetry']['vy'])  # vy attuale
+        coord_y = int(data['telemetry']['y'])
+        coord_x = int(data['telemetry']['x'])
+        if breaked is False:
             for el in init.data:
-                if el['id'] == init.active_objectives[pos_min]['id']:
+                if el['id'] == init.active_objectives[0]['id']:
                     print("Ho modificato obbiettivo a done -> true")
                     el['done'] = True
 
             if tp_first == 's':
                 print("Ho cominciato a fare un obbiettivo singolo ( POSSO ROUTE)")
-                melvin.go_and_scan(vel_arr[pos_min][count][0], vel_arr[pos_min][count][1],
-                                   init.active_objectives[pos_min]['optic_required'].lower(),
-                                   init.active_objectives[pos_min]['id'])
+                melvin.go_and_scan(vel_arr[0][count][0], vel_arr[0][count][1],
+                                   init.active_objectives[0]['optic_required'].lower(),
+                                   init.active_objectives[0]['id'], init.active_objectives[0])
             else:
                 print("Ho cominciato a fare un obbiettivo multiplo ( POSSO ROUTE)")
-                melvin.go_and_scan(vel_arr[pos_min][count][0], vel_arr[pos_min][count][1],
-                                   init.active_objectives[pos_min]['optic_required'].lower(),
-                                   init.active_objectives[pos_min]['id'], data_first[3], data_first[2], True)
-
+                melvin.go_and_scan(vel_arr[0][count][0], vel_arr[0][count][1],
+                                   init.active_objectives[0]['optic_required'].lower(),
+                                   init.active_objectives[0]['id'], init.active_objectives[0], data_first[3], data_first[2], True)
             return
-
         else:
+            vel_arr = [[] for _ in range(len(init.active_objectives))]
+            breaked = False
             count += 1
             t_route = 0
 
+    # lancio il piu vicino
+    print("lancio il + vicino perche non arrivo agli altri")
+    melvin.resume_the_tour()
     print("USCITO DA CALCULATOR")
     return
 
@@ -231,10 +245,10 @@ def calculate_distance_time_fuel(final_x, final_y, t_to_target, curr_x, curr_y, 
     m_vel_x = []  # create_v(max_x, min_x) #Creo array per movimento x
     m_vel_y2 = []
     m_multiple = []
-    m_vel_x = generate('x', max_x, min_x, curr_x, dec_x, t_to_target, delta_x, m_vel_x, multiple)
+    m_vel_x = generate('x', max_x, min_x, curr_x, dec_x, t_to_target, delta_x, m_vel_x, False, multiple)
     negative = True if coord_y > final_y else False
-    m_vel_y = generate('y', max_y, min_y, curr_y, dec_y, t_to_target, delta_y, m_vel_y, negative)
-    m_vel_y2 = generate('y', max_y, min_y, curr_y, dec_y, t_to_target, - delta_y, m_vel_y2, negative)
+    m_vel_y = generate('y', max_y, min_y, curr_y, dec_y, t_to_target, delta_y, m_vel_y, negative, multiple)
+    m_vel_y2 = generate('y', max_y, min_y, curr_y, dec_y, t_to_target, - delta_y, m_vel_y2, negative, multiple)
     list_y = m_vel_y + m_vel_y2
     list_y.sort(key=lambda el: el[2])
     if multiple:
