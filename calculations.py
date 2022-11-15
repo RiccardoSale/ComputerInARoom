@@ -73,7 +73,7 @@ def calculator():
 
             t_to_target -= t_route
 
-            if t_to_target < 480:  # Evitiamo velocità troppo consumose
+            if t_to_target < 300:  # Evitiamo velocità troppo consumose
                 breaked = True
                 print("Riprovo perche avevo troppo poco tempo")
                 break

@@ -20,6 +20,7 @@ def photo(n_foto, id):
             if obj['id'] == str(id) and obj['done'] is True:
                 if n_foto > 0:
                     stitching.stitch(init.cd)
+                    init.shutil.make_archive(init.cd,'xztar',init.cd)
                 init.sched.remove_job('photo')
                 init.taken = 0
                 init.active_objectives.pop(0)
@@ -27,6 +28,7 @@ def photo(n_foto, id):
     else:
         if n_foto > 0:
             stitching.stitch(init.cd)
+            init.shutil.make_archive(init.cd,'xztar',init.cd)
         init.sched.remove_job('photo')
         init.taken = 0
         init.active_objectives.pop(0)
@@ -74,6 +76,7 @@ def photo_row(n_foto, idx_row, max_row, lens):
             'photo_row' + str(idx_row))  # TODO potrebbe causare problemi remove troppo vicina a inizio funzione
         if idx_row == max_row:
             stitching.stitch(init.cd)
+            init.shutil.make_archive(init.cd,'xztar',init.cd)
             init.active_objectives.pop(0)
             melvin.reset()
     return

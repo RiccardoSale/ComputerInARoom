@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import requests
 import json
+import shutil
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 global active_objectives  # lista obbiettivi attivi
