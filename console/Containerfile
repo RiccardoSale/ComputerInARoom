@@ -1,0 +1,9 @@
+FROM docker.io/python:latest
+
+COPY requirements.txt /usr/src/console/requirements.txt
+
+WORKDIR /usr/src/console
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
