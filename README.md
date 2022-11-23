@@ -1,5 +1,3 @@
-# ComputerInARoom
-ESA challenge
 <!DOCTYPE html>
 <html>
 <head>
