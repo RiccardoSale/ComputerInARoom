@@ -1,4 +1,16 @@
 # ComputerInARoom
 ESA challenge
-![Alt text](aaaa)
-<img src="./3.svg">
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+img {
+  background-color: #FFFFFF;
+}
+</style>
+</head>
+<body>
+<p align="center"><img src="./3.svg"></p>
+</body>
+</html>
+
